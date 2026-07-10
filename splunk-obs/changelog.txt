@@ -1,0 +1,10 @@
+---------------------------------------------------------------------------------------------------
+Version: 0.1.0
+Date: 2026-07-10
+  Features:
+    - Export circuit-network signals from named Display Panels as Splunk multi-metric NDJSON to script-output/splunk-obs/.
+    - Name an exporter by typing text into a Display Panel's text field; blank panels are ignored (opt-in).
+    - One JSON line per (surface, exporter, wire, network) with all signals as metric_name:<signal> measurements; quality above normal is a :<quality> suffix.
+    - Runtime settings: sample interval (default 60 ticks = 1s) and output filename.
+    - Console command /splunk-obs-sample and remote interface splunk_obs.sample_now() to force an immediate sample.
+    - Compatible with the 2.0 (messages) and 2.1 (records) Display Panel control-behavior APIs.

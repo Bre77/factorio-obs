@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+
+# bridge tail state
+*.pos
+*.pos.tmp
+
+# sample output / local scratch
+*.ndjson
+script-output/
+
+# OS
+.DS_Store

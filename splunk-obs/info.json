@@ -1,0 +1,13 @@
+{
+  "name": "splunk-obs",
+  "version": "0.1.0",
+  "title": "Splunk Observability Exporter",
+  "author": "Bre77",
+  "contact": "brett.whynot@gmail.com",
+  "homepage": "https://github.com/Bre77/factorio-obs",
+  "description": "Exports circuit-network signals from named Display Panels as Splunk multi-metric NDJSON to script-output. Ingest via a Splunk file monitor, or ship to HEC / an OTEL collector with the included bridge.",
+  "factorio_version": "2.0",
+  "dependencies": [
+    "base >= 2.0.0"
+  ]
+}
