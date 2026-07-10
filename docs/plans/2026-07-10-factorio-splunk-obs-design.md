@@ -1,14 +1,20 @@
-# Factorio → Splunk circuit-network metrics exporter — Design
+# Factorio → Splunk circuit-network exporter — Design
 
 Date: 2026-07-10
-Status: Approved, building
+Status: Built and verified
+
+> **Revised after the first build.** The original design shipped Splunk
+> multi-metric data with an OTLP option. It was then pivoted to **plain JSON
+> events** (nested signal tree, one event per panel, a new file per game
+> session), and the bridge narrowed to stdout + HEC-events. Sections below marked
+> "(revised)" reflect the final state; earlier prose is kept as history.
 
 ## Goal
 
-Export Factorio circuit-network signal readings as metrics into Splunk. Primary,
-first-class path is a file the Splunk forwarder tails; HEC and OTEL are optional
-extras handled by a small sidecar. Target game: Factorio 2.0.77 + Space Age
-(forward-compatible with 2.1).
+Export Factorio circuit-network signal readings into Splunk as JSON events.
+Primary, first-class path is a file the Splunk forwarder tails; HEC is an
+optional push handled by a small sidecar. Target game: Factorio 2.0.77 + Space
+Age (forward-compatible with 2.1).
 
 ## The hard constraint that shapes everything
 
@@ -73,47 +79,53 @@ Verified API (2.0 / 2.1):
   `SignalID = {type=string?, name=string, quality=string?}`.
 - `LuaCircuitNetwork.network_id` → uint.
 
-## Output format — Splunk multi-metric NDJSON
+## Output format — JSON events (revised)
 
-Leaning hard into multi-metric: **one JSON line per `(surface, exporter, wire,
-network_id)`**, with every signal on that wire collapsed into the same line as a
-`metric_name:<signal>` measurement:
+> The output was pivoted from Splunk multi-metric to **plain JSON events**. One
+> event per named panel per sample, serialized with `helpers.table_to_json`.
+
+Each event carries `surface` and `exporter`, then a nested signal tree
+`wire.<color>.<item_type>.<item_name>[.<quality>] = value`:
 
 ```json
-{"surface":"nauvis","exporter":"iron smelting","wire":"green","network_id":17,"metric_name:iron-plate":4200,"metric_name:copper-plate":100,"metric_name:iron-plate:legendary":40}
+{"surface":"nauvis","exporter":"iron smelting","wire":{"green":{"network_id":17,"item":{"iron-plate":{"normal":4200,"legendary":40},"copper-plate":{"normal":100}},"fluid":{"water":5000}}}}
 ```
 
-Dimensions (kept deliberately low-cardinality):
-- `surface` — planet or space platform name.
-- `exporter` — the panel's name (user free-text, JSON-escaped).
-- `wire` — `red` or `green`.
-- `network_id` — circuit network id (disambiguates same-named exporters).
+- `wire.<red|green>.network_id` — **per wire**, because red and green are always
+  distinct networks; a single top-level id could not represent both.
+- Item signals nest one level deeper by **quality**. Non-item signals (fluids,
+  virtuals, …) place the value directly under the name — "quality is ignored for
+  non-quality items." The `type -> name -> [quality]` nesting fully namespaces
+  every signal, so nothing can collide.
 
-Measurements: `metric_name:<signal>`. **Quality is folded into the metric name**
-as a suffix (`iron-plate:legendary`); normal quality is bare (`iron-plate`).
-**Signal type is not encoded** — cross-type name collisions don't occur in
-practice, so keys stay clean. (Type as a prefix + quality as a suffix was
-considered and dropped as over-engineering for the target use.)
+**No timestamp field** (no wall clock). Splunk stamps `_time` at ingest (~1s for
+a live game); the HEC bridge stamps `time.time()`.
 
-**No timestamp field.** Every non-`metric_name:` field is a Splunk metric
-*dimension*; a per-tick timestamp would have unbounded cardinality and wreck the
-metrics index. Splunk assigns `_time` at ingest (real time within ~1s for a live
-game); the HEC/OTLP bridge stamps `time.time()` itself.
+## Files — one per game session
+
+The output filename is a template containing `{session}`, substituted with a
+per-load counter, so each session writes its own file (`factorio-1.ndjson`,
+`factorio-2.ndjson`, …). A **real epoch is impossible** (no `os.time`), so the
+counter is the stable alternative. The counter lives in `storage` and is bumped
+exactly once per session, lazily on the first sample (guarded by a plain local
+that resets on each `control.lua` load, since `storage` is read-only in
+`on_load`).
 
 ## The mod
 
 - `info.json` — name `splunk-obs`, `factorio_version` "2.0", depends on base.
 - `settings.lua` — runtime-global settings:
   - `splunk-obs-sample-interval` (int, default **60 ticks = 1 s**, min 1).
-  - `splunk-obs-filename` (string, default `splunk-obs/factorio-metrics.ndjson`).
+  - `splunk-obs-filename` (string, default `splunk-obs/factorio-{session}.ndjson`).
 - `control.lua`:
   - Registers `on_nth_tick(interval)`; re-registers on setting change / config
-    change; re-registers in `on_load` from `storage.interval` (determinism).
+    change; re-registers in `on_load` by reading the interval setting directly
+    (see the scheduler-bug note below — no `storage` dependency).
   - Each sample: for every surface, `find_entities_filtered{type="display-panel"}`,
-    read text, read red+green networks, group, append lines via
-    `helpers.write_file(filename, data, append=true)`.
-  - JSON is built by a hand-written serializer with proper string escaping
-    (exporter text is untrusted free-text). Integer counts only.
+    read the panel name, read red+green networks into a nested tree, append one
+    event per panel via `helpers.write_file(filename, data, append=true)`.
+  - JSON is serialized with `helpers.table_to_json` (handles nesting + escaping).
+    Integer counts only.
   - Remote interface `splunk_obs.sample_now()` and console command
     `/splunk-obs-sample` to force an immediate sample (also used by tests).
 - `locale/en/splunk-obs.cfg` — setting titles/descriptions.
@@ -126,33 +138,35 @@ Multiplayer note: `write_file` with default `for_player` writes on every
 machine; only the monitored host's copy matters. Target is single-player / local
 host. Documented, not solved, in v1.
 
-## The bridge (optional bonus) — `bridge/bridge.py`
+## The bridge (optional bonus) — `bridge/bridge.py` (revised)
 
 Python 3, **standard library only**. Tails the NDJSON file (with a persisted
-byte-offset `.pos` so restarts resume), batches lines, and ships them:
+byte-offset `.pos` so restarts resume; resets on truncation / a new session
+file), batches lines, and ships them:
 
 - `--mode stdout` — parse + pretty-print (dry-run / validation).
-- `--mode hec` — wrap each flat line into a Splunk HEC metric event
-  `{"time":…, "event":"metric", "fields":{…}}` and POST to
-  `/services/collector` with `Authorization: Splunk <token>`.
-- `--mode otlp` — convert each `metric_name:<name>` into an OTLP Gauge data
-  point (dimensions → attributes) and POST OTLP/HTTP **JSON** to
-  `<endpoint>/v1/metrics`. JSON encoding avoids a protobuf dependency.
+- `--mode hec` — wrap each JSON event in a HEC envelope `{"time":…, "event":…}`
+  and POST to `/services/collector` with `Authorization: Splunk <token>`.
 
-## Splunk file-monitor config — `splunk/`
+(The original OTLP metrics mode was dropped: the output is now nested JSON
+events, which don't map onto OTLP gauges. OTLP-logs could be added if wanted.)
 
-- `inputs.conf` — `monitor://…/script-output/splunk-obs/*.ndjson`, metrics index.
-- `props.conf` — sourcetype `factorio:metric`, `INDEXED_EXTRACTIONS=json`,
-  `category=Metrics`, `TIMESTAMP` set to current (index) time.
+## Splunk file-monitor config — `splunk/` (revised)
+
+- `inputs.conf` — `monitor://…/script-output/splunk-obs/*.ndjson`, events index.
+- `props.conf` — sourcetype `factorio:event`, `KV_MODE=json`, line-per-event,
+  `DATETIME_CONFIG=CURRENT` (index-time stamping).
 
 ## Testing
 
 1. **Headless load test** — `factorio --start-server` on a freshly created map
    with the mod enabled; assert the log shows the mod loaded with no Lua errors.
-2. **End-to-end via RCON** — a stdlib Python RCON client sends `/silent-command`
-   Lua to place a constant combinator + display panel, wire them, set a name and
-   signals, then `remote.call('splunk_obs','sample_now')`; assert the NDJSON file
-   contains the expected multi-metric line(s) with correct escaping/grouping.
+2. **End-to-end via RCON** — a stdlib Python RCON client places a constant
+   combinator (items of two qualities) + a storage tank (a fluid) wired into a
+   named display panel, forces a sample, and asserts the nested JSON event
+   (per-wire network_id, item quality nesting, non-item value placement, session
+   filename, exporter escaping). A save+reload confirms the session counter bumps
+   the filename.
 
 ## Build outcome & discoveries
 

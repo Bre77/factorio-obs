@@ -12,7 +12,9 @@ data:extend({
     type = "string-setting",
     name = "splunk-obs-filename",
     setting_type = "runtime-global",
-    default_value = "splunk-obs/factorio-metrics.ndjson",
+    -- {session} is replaced by a per-load counter, so each game session writes
+    -- its own file. Remove {session} to keep a single rolling file instead.
+    default_value = "splunk-obs/factorio-{session}.ndjson",
     allow_blank = false,
     order = "b",
   },

@@ -2,12 +2,13 @@
   Splunk Observability Exporter — control.lua
 
   Every N ticks, read the circuit-network signals connected to every *named*
-  Display Panel and append them to a NDJSON file under script-output, in Splunk
-  multi-metric format. See README.md and docs/plans for the full design.
+  Display Panel and append one JSON event per panel to a NDJSON file under
+  script-output. See README.md and docs/plans for the full design.
 
   Sandbox realities this code works within:
     * no network I/O            -> we only write a file
-    * no os.time / wall clock   -> no timestamp emitted; Splunk stamps at ingest
+    * no os.time / wall clock   -> no timestamp/epoch; a per-load counter names
+                                   the session file; Splunk stamps _time at ingest
     * helpers.write_file        -> the one sanctioned output path
 ]]
 
@@ -22,80 +23,52 @@ local WIRES = {
 }
 
 --------------------------------------------------------------------------------
--- JSON serialization (hand-rolled: the exporter name is untrusted free text)
+-- Event building (JSON via helpers.table_to_json)
 --------------------------------------------------------------------------------
 
-local ESCAPES = {
-  ['"'] = '\\"',
-  ['\\'] = '\\\\',
-  ['\b'] = '\\b',
-  ['\f'] = '\\f',
-  ['\n'] = '\\n',
-  ['\r'] = '\\r',
-  ['\t'] = '\\t',
-}
-
--- Escape a string for embedding in JSON. Control chars (%c covers 0x00-0x1F and
--- 0x7F), quotes and backslashes are escaped; bytes >= 0x80 pass through so valid
--- UTF-8 stays valid UTF-8 (and thus valid JSON).
-local function json_escape(s)
-  return (s:gsub('[%c"\\]', function(c)
-    return ESCAPES[c] or string.format('\\u%04x', string.byte(c))
-  end))
-end
-
--- The metric name for a signal: just its name, with the quality appended as a
--- suffix for anything above normal (e.g. "iron-plate", "iron-plate:legendary").
--- Signal type (item/fluid/virtual) is not encoded: cross-type name collisions
--- don't occur in practice, so keeping keys bare is cleaner.
-local function metric_key(signal)
-  local quality = signal.quality
-  if quality and quality ~= "normal" then
-    return signal.name .. ":" .. quality
-  end
-  return signal.name
-end
-
--- Build one Splunk multi-metric JSON line: all signals on one wire/network of
--- one exporter, as metric_name:<key> measurements. Dimensions: surface,
--- exporter, wire, network_id. measures is an ordered array of { key, value }.
-local function build_line(surface, exporter, wire, network_id, measures)
-  local p = {
-    '{"surface":"', json_escape(surface),
-    '","exporter":"', json_escape(exporter),
-    '","wire":"', wire,
-    '","network_id":', string.format("%d", network_id),
-  }
-  local i = #p
-  for _, m in ipairs(measures) do
-    i = i + 1; p[i] = ',"metric_name:'
-    i = i + 1; p[i] = json_escape(m.key)
-    i = i + 1; p[i] = '":'
-    i = i + 1; p[i] = string.format("%d", m.value)
-  end
-  i = i + 1; p[i] = '}'
-  return table.concat(p)
-end
-
---------------------------------------------------------------------------------
--- Sampling
---------------------------------------------------------------------------------
-
--- Read one panel's red+green networks and emit one multi-metric line per wire
--- that carries signals. Appends built lines to out[] and returns the new count.
-local function collect_panel(panel, exporter, surface_name, out, n)
+-- Build one JSON event for a panel, or nil if none of its wires carry signals.
+-- Shape:
+--   { surface, exporter, wire = { <color> = {
+--       network_id,
+--       <item_type> = { <signal_name> = { <quality> = value } }   -- items
+--       <item_type> = { <signal_name> = value }                   -- non-items
+--   } } }
+-- Quality is nested only for item-type signals (the "quality is ignored for
+-- non-quality items" rule); type -> name -> [quality] fully namespaces every
+-- signal, so no two ever collide.
+local function build_event(panel, exporter, surface_name)
+  local wires = nil
   for _, w in ipairs(WIRES) do
     local net = panel.get_circuit_network(w.id)
     if net and net.signals and #net.signals > 0 then
-      local measures = {}
-      for _, sig in ipairs(net.signals) do
-        measures[#measures + 1] = { key = metric_key(sig.signal), value = sig.count }
+      local tree = { network_id = net.network_id }
+      for _, entry in ipairs(net.signals) do
+        local signal = entry.signal
+        local item_type = signal.type or "item" -- item SignalIDs omit type
+        local by_type = tree[item_type]
+        if not by_type then
+          by_type = {}
+          tree[item_type] = by_type
+        end
+        if item_type == "item" then
+          local by_name = by_type[signal.name]
+          if not by_name then
+            by_name = {}
+            by_type[signal.name] = by_name
+          end
+          by_name[signal.quality or "normal"] = entry.count
+        else
+          by_type[signal.name] = entry.count
+        end
       end
-      n = n + 1
-      out[n] = build_line(surface_name, exporter, w.color, net.network_id, measures)
+      wires = wires or {}
+      wires[w.color] = tree
     end
   end
-  return n
+  if not wires then
+    return nil
+  end
+  return { surface = surface_name, exporter = exporter, wire = wires }
 end
 
 -- A Display Panel's control behavior holds its configured messages. In 2.0 the
@@ -141,9 +114,30 @@ local function exporter_name(panel)
   return nil
 end
 
--- One full sample across all surfaces. Writes at most one file append.
+-- A per-load session counter names the output file, giving each game session
+-- its own file. It must be bumped exactly once per session, from an event
+-- context (storage is read-only in on_load), so we do it lazily on first sample
+-- guarded by a plain local that resets when control.lua re-runs on each load.
+local session_started = false
+
+local function ensure_session()
+  if not session_started then
+    storage.session = (storage.session or 0) + 1
+    session_started = true
+  end
+end
+
+-- Resolve the output filename, substituting {session} with the session counter.
+local function session_filename()
+  local template = settings.global[SETTING_FILENAME].value
+  return (template:gsub("{session}", tostring(storage.session or 1)))
+end
+
+-- One full sample across all surfaces: one JSON event per named panel that has
+-- signals. Writes at most one file append.
 local function sample()
-  local filename = settings.global[SETTING_FILENAME].value
+  ensure_session()
+  local filename = session_filename()
   local out = {}
   local n = 0
   for _, surface in pairs(game.surfaces) do
@@ -153,7 +147,11 @@ local function sample()
       if panel.valid then
         local name = exporter_name(panel)
         if name then
-          n = collect_panel(panel, name, surface_name, out, n)
+          local event = build_event(panel, name, surface_name)
+          if event then
+            n = n + 1
+            out[n] = helpers.table_to_json(event)
+          end
         end
       end
     end
@@ -199,15 +197,15 @@ end)
 -- Manual triggers (also used by the automated end-to-end test)
 --------------------------------------------------------------------------------
 
-commands.add_command("splunk-obs-sample", "Force an immediate Splunk metrics sample.", function(_)
+commands.add_command("splunk-obs-sample", "Force an immediate splunk-obs sample.", function(_)
   local n = sample()
   if game and game.player then
-    game.player.print("[splunk-obs] wrote " .. n .. " metric line(s)")
+    game.player.print("[splunk-obs] wrote " .. n .. " event(s)")
   end
 end)
 
 remote.add_interface("splunk_obs", {
-  -- Returns the number of NDJSON lines written this sample.
+  -- Returns the number of JSON event lines written this sample.
   sample_now = function()
     return sample()
   end,

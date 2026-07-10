@@ -1,18 +1,17 @@
 # Splunk Observability Exporter (`splunk-obs`)
 
-A Factorio 2.0/2.1 (Space Age) mod that exports **circuit-network signals as
-metrics**. It reads the signals wired into any **named Display Panel** and writes
-them as [Splunk multi-metric](https://docs.splunk.com/Documentation/Splunk/latest/Metrics/GetMetricsInOther)
-NDJSON into `script-output/`, where Splunk (or the included bridge) can pick them
-up.
+A Factorio 2.0/2.1 (Space Age) mod that exports **circuit-network signals as JSON
+events**. It reads the signals wired into any **named Display Panel** and writes
+one NDJSON event per panel into `script-output/`, where Splunk (or the included
+bridge) can pick them up.
 
 ## Why it works this way
 
 Factorio mods run in a locked-down Lua sandbox: **no network access and no wall
-clock**. A mod cannot talk to Splunk HEC or an OTEL collector directly — the only
-sanctioned output is `helpers.write_file`. So this mod produces a file, and
-shipping it to Splunk/OTEL is done outside the game (a Splunk file monitor, or
-the `bridge/` sidecar). See the repo root README for the full picture.
+clock**. A mod cannot talk to Splunk HEC directly — the only sanctioned output is
+`helpers.write_file`. So this mod produces a file, and shipping it to Splunk is
+done outside the game (a Splunk file monitor, or the `bridge/` sidecar). See the
+repo root README for the full picture.
 
 ## Usage in-game
 
@@ -21,30 +20,41 @@ the `bridge/` sidecar). See the repo root README for the full picture.
 3. **Type a name into the panel's text field** — this becomes the `exporter`
    dimension (e.g. `iron smelting`, `mall`, `power`). A blank panel is ignored,
    so naming a panel is how you opt it in.
-4. That's it. Every second (configurable) the mod appends the panel's signals to
-   `script-output/splunk-obs/factorio-metrics.ndjson`.
+4. That's it. Every second (configurable) the mod appends one event per panel to
+   the current session's file, e.g. `script-output/splunk-obs/factorio-1.ndjson`.
 
 Place as many named panels as you like, across any surface (planets and space
-platforms). Each panel's red and green networks are reported separately.
+platforms). Each panel emits one event containing all of its wires.
 
 ## Output format
 
-One line per `(surface, exporter, wire, network_id)`:
+One JSON event per named panel per sample. Signals are a nested tree
+`wire.<color>.<item_type>.<item_name>[.<quality>] = value`:
 
 ```json
-{"surface":"nauvis","exporter":"iron smelting","wire":"green","network_id":17,"metric_name:iron-plate":4200,"metric_name:copper-plate":100,"metric_name:iron-plate:legendary":40}
+{"surface":"nauvis","exporter":"iron smelting","wire":{"green":{"network_id":17,"item":{"iron-plate":{"normal":4200,"legendary":40},"copper-plate":{"normal":100}},"fluid":{"water":5000}}}}
 ```
 
-- **Dimensions:** `surface`, `exporter`, `wire` (`red`/`green`), `network_id`.
-- **Measurements:** `metric_name:<signal>` — the signal name, with a `:<quality>`
-  suffix for anything above normal quality.
+- Top level: `surface`, `exporter`.
+- `wire.<red|green>.network_id` — red and green are always different networks.
+- `wire.<red|green>.<item_type>.<name>` — the value; for **item** signals it is
+  nested one level deeper by **quality** (`{"normal":…,"legendary":…}`). Quality
+  is omitted for non-item signals (fluids, virtuals), which sit directly under
+  their name.
+
+## Files: one per session
+
+Each game session writes its own file. The output filename is a template with a
+`{session}` placeholder, replaced by a per-load counter (there is no wall clock
+in the sandbox, so no real epoch is possible — the counter is the stable
+alternative). Remove `{session}` from the setting to use a single rolling file.
 
 ## Settings (Mod settings → Map)
 
 | Setting | Default | Meaning |
 |---|---|---|
 | Sample interval (ticks) | `60` | 60 ticks = 1 second at normal speed. |
-| Output file | `splunk-obs/factorio-metrics.ndjson` | Relative to `script-output/`. |
+| Output file | `splunk-obs/factorio-{session}.ndjson` | Relative to `script-output/`; `{session}` → per-load counter. |
 
 ## Manual trigger
 
@@ -61,5 +71,5 @@ One line per `(surface, exporter, wire, network_id)`:
 - **Naming under the hood:** on a wired panel the live `display_panel_text` is
   blanked by display conditions, so the name is read from the panel's configured
   message (`messages`/`records`) — which is exactly what its text field edits.
-- **File growth:** the NDJSON file is append-only. A Splunk forwarder tails it
-  fine; rotate/truncate it yourself if you want to reclaim disk.
+- **File growth:** each session file is append-only. A Splunk forwarder tails it
+  fine; delete old session files yourself to reclaim disk.

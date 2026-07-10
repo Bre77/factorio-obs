@@ -5,9 +5,10 @@ correct NDJSON. This is how the mod was verified against 2.0.77 + Space Age.
 
 - `rcon.py` — tiny stdlib Source-RCON client (handles Factorio's auth handshake;
   `.lua()` sends a multi-line silent-command with newlines preserved).
-- `headless_e2e.py` — builds a constant combinator wired into a named Display
-  Panel, forces a sample, and asserts the resulting multi-metric line
-  (dimensions, quality suffix, JSON escaping of the exporter name).
+- `headless_e2e.py` — builds a constant combinator (items, two qualities) and a
+  storage tank (a fluid) wired into a named Display Panel, forces a sample, and
+  asserts the resulting nested JSON event (per-wire network_id, quality nesting
+  for items, non-item value placement, session filename, exporter escaping).
 
 ## Run it
 

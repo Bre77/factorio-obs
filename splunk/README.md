@@ -1,21 +1,13 @@
 # Splunk ingestion
 
-The mod writes Splunk multi-metric NDJSON to Factorio's `script-output/splunk-obs/`.
-This is the **first-class, no-extra-process** path: point Splunk at the file.
+The mod writes JSON events to Factorio's `script-output/splunk-obs/`, one file
+per game session (`factorio-1.ndjson`, `factorio-2.ndjson`, …). This is the
+first-class, no-extra-process path: point Splunk at the files.
 
-## 1. Create a metrics index
+## 1. Create an events index
 
-```
-# indexes.conf
-[factorio_metrics]
-datatype = metric
-homePath   = $SPLUNK_DB/factorio_metrics/db
-coldPath   = $SPLUNK_DB/factorio_metrics/colddb
-thawedPath = $SPLUNK_DB/factorio_metrics/thaweddb
-```
-
-Or in Splunk Web: **Settings → Indexes → New Index**, Index Data Type = **Metrics**,
-name `factorio_metrics`.
+In Splunk Web: **Settings → Indexes → New Index**, type **Events**, name
+`factorio` (or reuse an existing index and change `index=` in `inputs.conf`).
 
 ## 2. Install the sourcetype and input
 
@@ -27,22 +19,27 @@ your OS, and restart Splunk / the forwarder.
 - If not, run a **Universal Forwarder** on the game machine with these same two
   files, forwarding to your indexer.
 
-## 3. Verify
+## 3. Search
+
+Each event is a nested tree. Use dotted paths / `spath`:
 
 ```spl
-| mcatalog values(metric_name) WHERE index=factorio_metrics
+index=factorio
+| spath path=wire.green.item.iron-plate.normal output=iron
+| timechart span=1m avg(iron) by exporter
 ```
 
 ```spl
-| mstats avg(_value) WHERE index=factorio_metrics AND metric_name="iron-plate"
-    BY exporter, surface span=10s
+index=factorio exporter="power"
+| spath path=wire.red.virtual.signal-A output=v
+| timechart max(v)
 ```
 
-Dimensions available for filtering / `BY`: `exporter`, `surface`, `wire`,
-`network_id`. Metric names are the signal names, with a `:<quality>` suffix for
-anything above normal (e.g. `iron-plate:legendary`).
+Top-level fields: `surface`, `exporter`. Then `wire.<red|green>.network_id` and
+`wire.<red|green>.<item_type>.<name>[.<quality>]` — quality is nested only for
+`item` signals; fluids/virtuals sit directly under their name.
 
-## Alternative: don't use a file monitor
+## Alternative: push instead of monitor
 
-If you'd rather push to a remote HEC endpoint or an OTEL collector, skip all of
-the above and use `../bridge/bridge.py` — see the top-level README.
+To push to a remote Splunk HEC endpoint, use `../bridge/bridge.py --mode hec`
+(sends each line as a HEC event). See the top-level README.
