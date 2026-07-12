@@ -1,12 +1,12 @@
 {
   "name": "circuit-logger",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "title": "Circuit Logger for Splunk",
   "author": "Bre77",
   "contact": "brett.whynot@gmail.com",
   "homepage": "https://github.com/Bre77/factorio-obs",
   "description": "Exports circuit-network signals from named Display Panels as JSON events (NDJSON) to script-output, one event per panel per second, a new file per game session. Ingest via a Splunk file monitor.",
-  "factorio_version": "2.0",
+  "factorio_version": "2.1",
   "dependencies": [
     "base >= 2.0.0"
   ]
