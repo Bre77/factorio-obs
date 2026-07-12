@@ -2,11 +2,11 @@
 Version: 0.1.0
 Date: 2026-07-10
   Features:
-    - Export circuit-network signals from named Display Panels as JSON events (NDJSON) to script-output/splunk-obs/.
+    - Export circuit-network signals from named Display Panels as JSON events (NDJSON) to script-output/circuit-logger/.
     - Name an exporter by typing text into a Display Panel's text field; blank panels are ignored (opt-in).
     - One JSON event per panel per sample, with a nested tree wire.<color>.<item_type>.<item_name>[.<quality>] = value. Quality is nested for item signals only; non-item signals (fluids, virtuals) sit directly under their name.
     - Each wire color carries its own network_id (red and green are distinct networks).
     - A new output file per game session, named via a {session} counter (no wall clock exists for a real epoch).
     - Runtime settings: sample interval (default 60 ticks = 1s) and output filename template.
-    - Console command /splunk-obs-sample and remote interface splunk_obs.sample_now() to force an immediate sample.
+    - Console command /circuit-logger-sample and remote interface circuit_logger.sample_now() to force an immediate sample.
     - Compatible with the 2.0 (messages) and 2.1 (records) Display Panel control-behavior APIs.

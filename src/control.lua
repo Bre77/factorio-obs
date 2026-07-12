@@ -1,5 +1,5 @@
 --[[
-  Splunk Observability Exporter — control.lua
+  Circuit Logger for Splunk — control.lua
 
   Every N ticks, read the circuit-network signals connected to every *named*
   Display Panel and append one JSON event per panel to a NDJSON file under
@@ -12,8 +12,8 @@
     * helpers.write_file        -> the one sanctioned output path
 ]]
 
-local SETTING_INTERVAL = "splunk-obs-sample-interval"
-local SETTING_FILENAME = "splunk-obs-filename"
+local SETTING_INTERVAL = "circuit-logger-sample-interval"
+local SETTING_FILENAME = "circuit-logger-filename"
 
 -- Which wire connectors a Display Panel exposes (it is a simple single-point
 -- circuit entity, so red/green rather than combinator input/output).
@@ -197,14 +197,14 @@ end)
 -- Manual triggers (also used by the automated end-to-end test)
 --------------------------------------------------------------------------------
 
-commands.add_command("splunk-obs-sample", "Force an immediate splunk-obs sample.", function(_)
+commands.add_command("circuit-logger-sample", "Force an immediate circuit-logger sample.", function(_)
   local n = sample()
   if game and game.player then
-    game.player.print("[splunk-obs] wrote " .. n .. " event(s)")
+    game.player.print("[circuit-logger] wrote " .. n .. " event(s)")
   end
 end)
 
-remote.add_interface("splunk_obs", {
+remote.add_interface("circuit_logger", {
   -- Returns the number of JSON event lines written this sample.
   sample_now = function()
     return sample()

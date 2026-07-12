@@ -6,7 +6,7 @@ import glob, json, os, time
 from rcon import Rcon
 
 OUTDIR = os.path.expanduser(
-    "~/Library/Application Support/factorio/script-output/splunk-obs"
+    "~/Library/Application Support/factorio/script-output/circuit-logger"
 )
 NAME = 'iron "smelting"'  # embedded quote exercises JSON escaping
 
@@ -40,7 +40,7 @@ print("build:", build)
 for _ in range(15):  # step ticks so the network exists (empty server barely ticks)
     r.cmd("/silent-command 1")
 time.sleep(0.5)
-n = r.lua("rcon.print(remote.call('splunk_obs','sample_now'))")
+n = r.lua("rcon.print(remote.call('circuit_logger','sample_now'))")
 print("events written:", n)
 print("session:", r.lua("rcon.print(storage.session)"))
 

@@ -1,17 +1,17 @@
-# Splunk Observability Exporter (`splunk-obs`)
+# Circuit Logger for Splunk (`circuit-logger`)
 
 A Factorio 2.0/2.1 (Space Age) mod that exports **circuit-network signals as JSON
 events**. It reads the signals wired into any **named Display Panel** and writes
-one NDJSON event per panel into `script-output/`, where Splunk (or the included
-bridge) can pick them up.
+one NDJSON event per panel into `script-output/`, where a Splunk file monitor can
+pick them up.
 
 ## Why it works this way
 
 Factorio mods run in a locked-down Lua sandbox: **no network access and no wall
 clock**. A mod cannot talk to Splunk HEC directly — the only sanctioned output is
 `helpers.write_file`. So this mod produces a file, and shipping it to Splunk is
-done outside the game (a Splunk file monitor, or the `bridge/` sidecar). See the
-repo root README for the full picture.
+done outside the game with a Splunk file monitor. See the repo root README for
+the full picture.
 
 ## Usage in-game
 
@@ -21,7 +21,7 @@ repo root README for the full picture.
    dimension (e.g. `iron smelting`, `mall`, `power`). A blank panel is ignored,
    so naming a panel is how you opt it in.
 4. That's it. Every second (configurable) the mod appends one event per panel to
-   the current session's file, e.g. `script-output/splunk-obs/factorio-1.ndjson`.
+   the current session's file, e.g. `script-output/circuit-logger/factorio-1.ndjson`.
 
 Place as many named panels as you like, across any surface (planets and space
 platforms). Each panel emits one event containing all of its wires.
@@ -54,18 +54,17 @@ alternative). Remove `{session}` from the setting to use a single rolling file.
 | Setting | Default | Meaning |
 |---|---|---|
 | Sample interval (ticks) | `60` | 60 ticks = 1 second at normal speed. |
-| Output file | `splunk-obs/factorio-{session}.ndjson` | Relative to `script-output/`; `{session}` → per-load counter. |
+| Output file | `circuit-logger/factorio-{session}.ndjson` | Relative to `script-output/`; `{session}` → per-load counter. |
 
 ## Manual trigger
 
-- Console: `/splunk-obs-sample`
-- Script/remote: `remote.call("splunk_obs", "sample_now")` → returns lines written.
+- Console: `/circuit-logger-sample`
+- Script/remote: `remote.call("circuit_logger", "sample_now")` → returns lines written.
 
 ## Notes & limits
 
 - **Timestamps:** the mod emits no time field (no wall clock in the sandbox);
-  Splunk stamps `_time` at ingest (real-time within ~1s for a live game). The
-  bridge's HEC mode stamps time itself.
+  Splunk stamps `_time` at ingest (real-time within ~1s for a live game).
 - **Multiplayer:** `write_file` writes on every connected machine; monitor the
   host's copy. Designed for single-player / a local host.
 - **Naming under the hood:** on a wired panel the live `display_panel_text` is

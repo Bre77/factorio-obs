@@ -1,6 +1,6 @@
 # Splunk ingestion
 
-The mod writes JSON events to Factorio's `script-output/splunk-obs/`, one file
+The mod writes JSON events to Factorio's `script-output/circuit-logger/`, one file
 per game session (`factorio-1.ndjson`, `factorio-2.ndjson`, …). This is the
 first-class, no-extra-process path: point Splunk at the files.
 
@@ -38,8 +38,3 @@ index=factorio exporter="power"
 Top-level fields: `surface`, `exporter`. Then `wire.<red|green>.network_id` and
 `wire.<red|green>.<item_type>.<name>[.<quality>]` — quality is nested only for
 `item` signals; fluids/virtuals sit directly under their name.
-
-## Alternative: push instead of monitor
-
-To push to a remote Splunk HEC endpoint, use `../bridge/bridge.py --mode hec`
-(sends each line as a HEC event). See the top-level README.

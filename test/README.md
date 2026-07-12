@@ -16,9 +16,9 @@ correct NDJSON. This is how the mod was verified against 2.0.77 + Space Age.
 FBIN="/path/to/factorio"          # the game binary
 FACT="$HOME/Library/Application Support/factorio"
 
-# 1. install the mod (symlink the folder; name must stay 'splunk-obs') and enable it
-ln -sfn "$PWD/splunk-obs" "$FACT/mods/splunk-obs"
-#   add {"name":"splunk-obs","enabled":true} to $FACT/mods/mod-list.json
+# 1. install the mod (symlink src as the mod folder; name must stay 'circuit-logger') and enable it
+ln -sfn "$PWD/src" "$FACT/mods/circuit-logger"
+#   add {"name":"circuit-logger","enabled":true} to $FACT/mods/mod-list.json
 
 # 2. create a map and start a headless server with RCON
 "$FBIN" --create /tmp/test.zip
